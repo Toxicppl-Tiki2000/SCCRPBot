@@ -85,7 +85,7 @@ class AusweisModal(Modal, title="Charakter-Ausweis erstellen"):
 
             # === Logging ===
             log_to_database("erstellt", interaction.user, guild_name, ausweis_id)
-            await log_to_discord(f"📥 Neuer Ausweis eingereicht von `{interaction.user}` auf **{guild_name}** (ID: `{ausweis_id}`)")
+            await log_to_discord(self.bot, f"📥 Neuer Ausweis eingereicht von `{interaction.user}` auf **{guild_name}** (ID: `{ausweis_id}`)")
 
         except ValueError as ve:
             await interaction.response.send_message(f"❌ Fehler im Formular: {ve}", ephemeral=True)
@@ -138,9 +138,57 @@ class AusweisView(View):
                 await user.send(embed=embed)
             except discord.Forbidden:
                 print(f"[WARN] Konnte {user} keine DM senden.")
+        
 
         await self.message.delete()  # Lösche die Nachricht
         await interaction.followup.send("Ausweis bestätigt.", ephemeral=True)
+
+        # === Logging ===
+        guild_name = interaction.guild.name.lower() if interaction.guild else "Unbekannt"
+        log_to_database("angenommen", interaction.user, guild_name, self.ausweis_id, log_level="INFO")
+        await log_to_discord(self.bot, f"✅ Ausweis `{self.ausweis_id}` wurde von `{interaction.user}` auf **{guild_name}** bestätigt.")
+
+    @discord.ui.button(label="❌", style=discord.ButtonStyle.red)
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)  # Sofortige Bestätigung
+
+        cursor = db.cursor()
+        cursor.execute("""
+            SELECT user_id, name, vorname
+            FROM ausweise WHERE id = %s
+        """, (self.ausweis_id,))
+        result = cursor.fetchone()
+
+        if result:
+            user_id, name, vorname = result
+            user = await self.bot.fetch_user(user_id)
+
+            embed = discord.Embed(
+                title="❌ Dein Ausweis wurde abgelehnt",
+                description="Dein Charakter-Ausweis wurde leider abgelehnt. Du kannst es erneut versuchen.",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Name", value=name, inline=True)
+            embed.add_field(name="Vorname", value=vorname, inline=True)
+
+            try:
+                await user.send(embed=embed)
+            except discord.Forbidden:
+                print(f"[WARN] Konnte {user} keine DM senden.")
+
+        cursor.execute("DELETE FROM ausweise WHERE id = %s", (self.ausweis_id,))
+        db.commit()
+        cursor.close()
+
+        try:
+            await self.message.delete()
+        except discord.NotFound:
+            print("[WARN] Nachricht bereits gelöscht.")
+
+        # === Logging ===
+        guild_name = interaction.guild.name.lower() if interaction.guild else "Unbekannt"
+        log_to_database("abgelehnt", interaction.user, guild_name, self.ausweis_id, log_level="INFO")
+        await log_to_discord(self.bot, f"❌ Ausweis `{self.ausweis_id}` wurde von `{interaction.user}` auf **{guild_name}** abgelehnt.")
 
 
 # --- Cog + Command ----------------------------------
